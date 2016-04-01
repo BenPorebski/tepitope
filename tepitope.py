@@ -44,7 +44,7 @@ class HLAmatrix:
         for i in range(len(sequence)-9):
             scored = self.score(sequence[i:i+9])
             if scored[1] >= self.threshold_score:
-                returned_score.append(scored)
+                returned_score.append( (scored[0],scored[1],i,i+8) )
 
         return sorted(returned_score, key=lambda score: score[1], reverse=True)
 
@@ -63,13 +63,16 @@ if __name__ == '__main__':
     import os, glob, sys, argparse, re
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', "--threshold", dest='threshold', default=5)
+    parser.add_argument('-t', "--threshold", dest='threshold', type=int, default=5)
     parser.add_argument('-c', '--csv', dest='csv_filename', default=None, help='filename for CSV output')
     parser.add_argument('--no-header', dest='csv_header', action='store_false',
-                        help='supress writing of a header row in the CSV file')
+                        help='omit the header row from the CSV file')
     parser.add_argument('-f', '--file', '--sequence-file', dest='filename', default=None,
                         help='file which contains the sequence')
-    parser.add_argument("sequence", default=None, nargs='?', help='The peptide sequence to analyze, if not using -s')
+    parser.add_argument('-i', '--starting-index', dest='base_index', default=1, type=int,
+                        help='the index of the first peptide in the sequence, used to offset the begin and end indexes '
+                             'of the results')
+    parser.add_argument("sequence", default=None, nargs='?', help='the peptide sequence to analyze, if not using -f')
     args = parser.parse_args()
 
     # get sequence
@@ -89,24 +92,25 @@ if __name__ == '__main__':
     results = set()
     for matrix_file in glob.glob('matrices/*.csv'):
         matrix = HLAmatrix(matrix_file, args.threshold)
-        for epitope, score in matrix.score_sequence(sequence):
-            results.add((epitope, score, matrix.allele))
+        for epitope, score, begin, end in matrix.score_sequence(sequence):
+            results.add( (score, begin + args.base_index, end + args.base_index, epitope, matrix.allele) )
 
-    results = sorted( results, key=lambda row:row[1], reverse=True )
+    results = sorted( results, key=lambda row:row[0], reverse=True )
 
+    # output
     if args.csv_filename is not None:
         # CSV output
         import csv
         with open(args.csv_filename, 'wb') as csv_file:
             out = csv.writer(csv_file,lineterminator=os.linesep)
             if args.csv_header:
-                out.writerow(('epitope', 'score', 'allele'))
+                out.writerow(('score', 'begin', 'end', 'epitope', 'allele'))
             for result in results:
                 out.writerow(result)
     else:
         # stdout
         for result in results:
-            print '%.2f\t%s\t%s'%(result[1],result[0],result[2])
+            print '%.2f\t%d\t%d\t%s\t%s'%result
 
 
     ##### Example 2 #####

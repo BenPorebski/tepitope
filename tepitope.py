@@ -1,34 +1,32 @@
-'''A local implementation of tepitope - an MHC class II binding predictor.'''
-import os, glob
+"""A local implementation of tepitope - an MHC class II binding predictor."""
+
 
 class HLAmatrix:
-    '''class for loading and scoring a matrix'''
+    """class for loading and scoring a matrix"""
 
     def load_matrix(self, matrix_file):
-        '''Loads and parses the matrix into memory'''
-        matrix_handle = open(matrix_file)
+        """Loads and parses the matrix into memory"""
+        with open(matrix_file) as matrix_handle:
+            percentage_threshold_tmp = ''
+            scoring_tmp = ''
+            for line in matrix_handle:
+                if len(line.split(',')[0]) <= 2:
+                    line = line.replace('-', '-0')
+                    # print line
+                    self.matrix_data[line.split(',')[0][0]] = map(float, (line.strip().split(',')[1:]))
 
-        percentage_threshold_tmp = ''
-        scoring_tmp = ''
-        for line in matrix_handle:
-            if len(line.split(',')[0]) <= 2:
-                line = line.replace('-', '-0')
-                # print line
-                self.matrix_data[line.split(',')[0][0]] = map(float, (line.strip().split(',')[1:]))
+                if line.split(',')[0] == 'Percent Threshold':
+                    percentage_threshold_tmp = line.rstrip().split(',')[1:]
+                if line.split(',')[0] == 'Numerical Score':
+                    scoring_tmp = line.rstrip().split(',')[1:]
 
-            if line.split(',')[0] == 'Percent Threshold':
-                percentage_threshold_tmp = line.rstrip().split(',')[1:]
-            if line.split(',')[0] == 'Numerical Score':
-                scoring_tmp = line.rstrip().split(',')[1:]
-
-        for i, threshold in enumerate(percentage_threshold_tmp):
-            thresh_clean = threshold.split('%')[0]
-            if int(thresh_clean) == self.threshold:
-                self.threshold_score = float(scoring_tmp[i])
-        matrix_handle.close()
+            for i, threshold in enumerate(percentage_threshold_tmp):
+                thresh_clean = threshold.split('%')[0]
+                if int(thresh_clean) == self.threshold:
+                    self.threshold_score = float(scoring_tmp[i])
 
     def score(self, nonamer):
-        '''Scores a nonamer based on the loaded matrix'''
+        """Scores a nonamer based on the loaded matrix"""
         score = 0
         for i, residue in enumerate(nonamer):
             try:
@@ -41,7 +39,7 @@ class HLAmatrix:
 
 
     def score_sequence(self, sequence):
-        '''Scores an entire sequence based on the loaded matrix and threshold'''
+        """Scores an entire sequence based on the loaded matrix and threshold"""
         returned_score = []
         for i in range(len(sequence)-9):
             scored = self.score(sequence[i:i+9])
@@ -60,28 +58,62 @@ class HLAmatrix:
         self.load_matrix(csv_file)   ## Load the matrix
 
 
-##### Example 1 #####
+if __name__ == '__main__':
 
-sequence = "PSPPGNLRVTDVTSTSVTLSWEPPPGPITGYRVEYREAGGEWKEVTVPGSETSYTVTGLKPGTEYEFRVRAVNGAGEGPPSSVSVTT"
-# print 'Sequence: %s' % (sequence)
+    import os, glob, sys, argparse, re
 
-objects = []
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-t', "--threshold", dest='threshold', default=5)
+    parser.add_argument('-c', '--csv', dest='csv_filename', default=None, help='filename for CSV output')
+    parser.add_argument('--no-header', dest='csv_header', action='store_false',
+                        help='supress writing of a header row in the CSV file')
+    parser.add_argument('-f', '--file', '--sequence-file', dest='filename', default=None,
+                        help='file which contains the sequence')
+    parser.add_argument("sequence", default=None, nargs='?', help='The peptide sequence to analyze, if not using -s')
+    args = parser.parse_args()
 
-files = glob.glob('matrices/*.csv')
-for file in files:
-    objects.append(HLAmatrix(file, 5))
+    # get sequence
+    if args.sequence is not None and args.filename is not None:
+        print >> sys.stderr, 'You must specify only one of -f, --file, --sequence-file, or the sequence as a command-line argument'
+        exit(1)
+    if args.sequence is None and args.filename is None:
+        print >> sys.stderr, 'You must specify -f, --file, --sequence-file, or put the sequence as a command-line argument'
+        exit(1)
+    if args.sequence:
+        sequence = args.sequence
+    else:
+        with open(args.filename) as f:
+            sequence = re.sub(r'\s', '', f.read())
 
-for matrix in objects:
-    print matrix.allele
-    print matrix.score_sequence(sequence)
+    # generate results
+    results = set()
+    for matrix_file in glob.glob('matrices/*.csv'):
+        matrix = HLAmatrix(matrix_file, args.threshold)
+        for epitope, score in matrix.score_sequence(sequence):
+            results.add((epitope, score, matrix.allele))
+
+    results = sorted( results, key=lambda row:row[1], reverse=True )
+
+    if args.csv_filename is not None:
+        # CSV output
+        import csv
+        with open(args.csv_filename, 'wb') as csv_file:
+            out = csv.writer(csv_file,lineterminator=os.linesep)
+            if args.csv_header:
+                out.writerow(('epitope', 'score', 'allele'))
+            for result in results:
+                out.writerow(result)
+    else:
+        # stdout
+        for result in results:
+            print '%.2f\t%s\t%s'%(result[1],result[0],result[2])
 
 
-##### Example 2 #####
+    ##### Example 2 #####
 
-# sequence = "PSPPGNLRVTDVTSTSVTLSWEPPPGPITGYRVEYREAGGEWKEVTVPGSETSYTVTGLKPGTEYEFRVRAVNGAGEGPPSSVSVTT"
-# # print 'Sequence: %s' % (sequence)
-# drb1_0101 = HLAmatrix('matrices/HLA-DRB1_0101.csv', 5)
-# print drb1_0101.score_sequence(sequence)
-# drb1_0801 = HLAmatrix('matrices/HLA-DRB1_0801.csv', 5)
-# print drb1_0801.score_sequence(sequence)
-
+    # sequence = "PSPPGNLRVTDVTSTSVTLSWEPPPGPITGYRVEYREAGGEWKEVTVPGSETSYTVTGLKPGTEYEFRVRAVNGAGEGPPSSVSVTT"
+    # # print 'Sequence: %s' % (sequence)
+    # drb1_0101 = HLAmatrix('matrices/HLA-DRB1_0101.csv', 5)
+    # print drb1_0101.score_sequence(sequence)
+    # drb1_0801 = HLAmatrix('matrices/HLA-DRB1_0801.csv', 5)
+    # print drb1_0801.score_sequence(sequence)
